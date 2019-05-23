@@ -1,0 +1,5 @@
+{
+    "require": {
+        "chdemko/bitarray": "1.2.x-dev"
+    }
+}
