@@ -119,18 +119,18 @@ class SCTE35Parser {
 			$desc_len = bindec($this->read(8));
 			$length -= 2;
 			$length -= $desc_len;
-
 			switch ($desc_tag) {
-				case 0x0:
+				case 0:
 					$splice_desc = $this->parseAvailDescriptor($desc_len);
 					break;
-				case 0x2:
+				case 2:
 					$splice_desc = $this->parseSegmentationDescriptor($desc_len);
 					break;
 				default:
 					$splice_desc = new stdClass();
-					if ($desc_len > 0)
-						$splice_desc->raw = $this->binaryStringToHex($this->read($desc_len*8));
+					$splice_desc->identifier = bindec($this->read(32));
+					if ($desc_len > 32)
+						$splice_desc->raw = $this->binaryStringToHex($this->read(($desc_len-32)*8));
 			}
 			$splice_desc->splice_descriptor_tag = $desc_tag;
 			$splice_desc->descriptor_length = $desc_len;
@@ -141,8 +141,10 @@ class SCTE35Parser {
 
 	private function parseAvailDescriptor($length) {
 		$desc = new stdClass();
-		$desc->identifier = bindec($this->read(32));
-		$desc->providier_avail_id = bindec($this->read(32));
+		if ($length >= 8) {
+			$desc->identifier = bindec($this->read(32));
+			$desc->providier_avail_id = bindec($this->read(32));
+		}
 		return $desc;
 	}
 
@@ -183,6 +185,7 @@ class SCTE35Parser {
 			$desc->segmentation_upid = $this->binaryStringToHex($this->read(8*$desc->segmentation_upid_length));
 
 			$desc->segment_type_id = bindec($this->read(8));
+			$desc->segment_type_text = $this->getSegmentationTypeText($desc->segment_type_id);
 			$desc->segment_num = bindec($this->read(8));
 			$desc->segments_expected = bindec($this->read(8));
 		}
@@ -215,6 +218,8 @@ class SCTE35Parser {
 		for ($i=0; $i<$len; $i++) {
 			$buff .= $this->iterator->current() ? 1 : 0;
 			$this->iterator->next();
+			if (!$this->iterator->valid())
+				break;
 		}
 		return $buff;
 	}
@@ -231,6 +236,51 @@ class SCTE35Parser {
 			$buff .= sprintf("%02s",$hex);
 		}
 		return $buff;
+	}
+
+	private function getSegmentationTypeText($segmentationTypeId) {
+		$id = sprintf("%02d", $segmentationTypeId);
+		$mapSegmentationTypeId = array(
+			'00' => '(0x00) Not Indicated',
+			'01' => '(0x01) Content Identification',
+			'16' => '(0x10) Program Start',
+			'17' => '(0x11) Program End',
+			'18' => '(0x12) Program Early Termination',
+			'19' => '(0x13) Program Breakaway',
+			'20' => '(0x14) Program Resumption',
+			'21' => '(0x15) Program Runover Planned',
+			'22' => '(0x16) Program Runover Unplanned',
+			'23' => '(0x17) Program Overlap Start',
+			'24' => '(0x18) Program Blackout Override',
+			'25' => '(0x19) Program Start – In Progress',
+			'32' => '(0x20) Chapter Start',
+			'33' => '(0x21) Chapter End',
+			'34' => '(0x22) Break Start',
+			'35' => '(0x23) Break End',
+			'36' => '(0x24) Opening Credit Start',
+			'37' => '(0x25) Opening Credit End',
+			'38' => '(0x26) Closing Credit Start',
+			'39' => '(0x27) Closing Credit End',
+			'48' => '(0x30) Provider Advertisement Start',
+			'49' => '(0x31) Provider Advertisement End',
+			'50' => '(0x32) Distributor Advertisement Start',
+			'51' => '(0x33) pected Distributor Advertisement End',
+			'52' => '(0x34) Provider Placement Opportunity Start',
+			'53' => '(0x35) Provider Placement Opportunity End',
+			'54' => '(0x36) Distributor Placement Opportunity Start',
+			'55' => '(0x37) Distributor Placement Opportunity End',
+			'56' => '(0x38) Provider Overlay Placement Opportunity Start',
+			'57' => '(0x39) Provider Overlay Placement Opportunity End',
+			'58' => '(0x3A) Distributor Overlay Placement Opportunity Start',
+			'59' => '(0x3B) Distributor Overlay Placement Opportunity End',
+			'64' => '(0x40) Unscheduled Event Start',
+			'65' => '(0x41) Unscheduled Event End',
+			'80' => '(0x50) Network Start',
+			'81' => '(0x51) Network End'
+		);
+		if (isset($mapSegmentationTypeId[$id]))
+			return $mapSegmentationTypeId[$id];
+		return 'unknown segmentation_type_id ('.$segmentationTypeId.')';
 	}
 
 }
