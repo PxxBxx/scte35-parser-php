@@ -48,6 +48,7 @@ class SCTE35Parser {
 		$splice->encrypted_packet = (bool)$this->read(1);
 		$splice->encryption_algorithm = bindec($this->read(6));
 		$splice->pts_adjustment = bindec($this->read(33));
+		$splice->pts_adjustment_text = $this->ptsTimeToString($splice->pts_adjustment);
 		$splice->cw_index = bindec($this->read(8));
 		$splice->tier = $this->binaryStringToHex($this->read(12));
 		$splice->splice_command_length = bindec($this->read(12));
@@ -120,21 +121,31 @@ class SCTE35Parser {
 			$length -= 2;
 			$length -= $desc_len;
 			switch ($desc_tag) {
-				case 0:
-					$splice_desc = $this->parseAvailDescriptor($desc_len);
+				case 0: // AvailDescriptor
+					$desc = $this->parseAvailDescriptor($desc_len);
+					$desc->splice_descriptor_tag_text = 'AvailDescriptor';
 					break;
-				case 2:
-					$splice_desc = $this->parseSegmentationDescriptor($desc_len);
+				case 2: // SegmentationDescriptor
+					$desc = $this->parseSegmentationDescriptor($desc_len);
+					$desc->splice_descriptor_tag_text = 'SegmentationDescriptor';
 					break;
-				default:
-					$splice_desc = new stdClass();
-					$splice_desc->identifier = bindec($this->read(32));
+				case 1: // DTMFDescriptor
+					$desc = $this->parseDTMFDescriptor($desc_len);
+					$desc->splice_descriptor_tag_text = 'DTMFDescriptor';
+					break;
+				case 3: // TimeDescriptor
+				case 4: // AudioDescriptor
+				default: // 0x05 - 0xFF Reserved for future SCTE splice_descriptors
+					$desc = new stdClass();
+					$desc->identifier = dechex(bindec($this->read(32)));
+					$desc->identifier_text = (string)hex2bin($desc->identifier);
 					if ($desc_len > 32)
-						$splice_desc->raw = $this->binaryStringToHex($this->read(($desc_len-32)*8));
+						$desc->raw = '0x'.$this->binaryStringToHex($this->read(($desc_len-32)*8));
+					$desc->splice_descriptor_tag_text = 'ReservedDescriptor';
 			}
-			$splice_desc->splice_descriptor_tag = $desc_tag;
-			$splice_desc->descriptor_length = $desc_len;
-			$toReturn[] = $splice_desc;
+			$desc->splice_descriptor_tag = $desc_tag;
+			$desc->descriptor_length = $desc_len;
+			$toReturn[] = $desc;
 		}
 		return $toReturn;
 	}
@@ -142,7 +153,8 @@ class SCTE35Parser {
 	private function parseAvailDescriptor($length) {
 		$desc = new stdClass();
 		if ($length >= 8) {
-			$desc->identifier = bindec($this->read(32));
+			$desc->identifier = dechex(bindec($this->read(32)));
+			$desc->identifier_text = (string)hex2bin($desc->identifier);
 			$desc->providier_avail_id = bindec($this->read(32));
 		}
 		return $desc;
@@ -150,7 +162,8 @@ class SCTE35Parser {
 
 	private function parseSegmentationDescriptor($length) {
 		$desc = new stdClass();
-		$desc->identifier = bindec($this->read(32));
+		$desc->identifier = dechex(bindec($this->read(32)));
+		$desc->identifier_text = (string)hex2bin($desc->identifier);
 		$desc->segmentation_event_id = bindec($this->read(32));
 		$desc->segmentation_event_cancel_indicator = (bool)$this->read(1);
 		$this->read(7); // reserved
@@ -183,11 +196,26 @@ class SCTE35Parser {
 			$desc->segmentation_upid_type = bindec($this->read(8));
 			$desc->segmentation_upid_length = bindec($this->read(8));
 			$desc->segmentation_upid = $this->binaryStringToHex($this->read(8*$desc->segmentation_upid_length));
+			$desc->segmentation_upid_text = (string)hex2bin($desc->segmentation_upid);
 
 			$desc->segment_type_id = bindec($this->read(8));
 			$desc->segment_type_text = $this->getSegmentationTypeText($desc->segment_type_id);
 			$desc->segment_num = bindec($this->read(8));
 			$desc->segments_expected = bindec($this->read(8));
+		}
+		return $desc;
+	}
+
+	private function parseDTMFDescriptor($length) {
+		$desc = new stdClass();
+		$desc->identifier = dechex(bindec($this->read(32)));
+		$desc->identifier_text = (string)hex2bin($desc->identifier);
+		$desc->preroll = bindec($this->read(8));
+		$desc->dtmf_count = bindec($this->read(3));
+		$this->read(5);
+		$desc->DTMF_char = array();
+		for ($i=0; $i<$desc->dtmf_count; $i++) {
+			$desc->DTMF_char[] = chr(bindec($this->read(8)));
 		}
 		return $desc;
 	}
@@ -198,6 +226,7 @@ class SCTE35Parser {
 		if ($splice_time->time_specified_flag) {
 			$this->read(6); // reserved
 			$splice_time->pts_time = bindec($this->read(33));
+			$splice_time->pts_time_text = $this->ptsTimeToString($splice_time->pts_time);
 		} else {
 			$this->read(7);
 		}
@@ -281,6 +310,14 @@ class SCTE35Parser {
 		if (isset($mapSegmentationTypeId[$id]))
 			return $mapSegmentationTypeId[$id];
 		return 'unknown segmentation_type_id ('.$segmentationTypeId.')';
+	}
+
+	private function ptsTimeToString($pts_time) {
+		$pts_sec = $pts_time / 90000;
+		$sec = floor(($pts_sec*1000) % 60000) / 1000;
+		$min = floor(($pts_sec - $sec) / 60) % 60;
+		$hour = floor(($pts_sec - $sec - $min*60) / 3600);
+		return sprintf("%02d:%02d:%02.03f", $hour, $min, $sec);
 	}
 
 }
