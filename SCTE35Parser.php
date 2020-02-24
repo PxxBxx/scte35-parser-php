@@ -17,7 +17,37 @@ class SCTE35Parser {
 		$this->iterator = $this->bitarray->getIterator();
 		$this->splice = new stdClass();
 		$this->parse();
-		return json_encode($this->splice);
+		if (($out = json_encode($this->splice)) === false) {
+			switch (json_last_error()) {
+				case JSON_ERROR_NONE:
+					echo ' - No errors';
+					break;
+				case JSON_ERROR_DEPTH:
+					echo ' - Maximum stack depth exceeded';
+					break;
+				case JSON_ERROR_STATE_MISMATCH:
+					echo ' - Underflow or the modes mismatch';
+					break;
+				case JSON_ERROR_CTRL_CHAR:
+					echo ' - Unexpected control character found';
+					break;
+				case JSON_ERROR_SYNTAX:
+					echo ' - Syntax error, malformed JSON';
+					break;
+				case JSON_ERROR_UTF8:
+					echo ' - Malformed UTF-8 characters, possibly incorrectly encoded';
+					break;
+				default:
+					echo ' - Unknown error';
+					break;
+			}
+			ob_start();
+			print_r($this->splice);
+			$out = ob_get_contents();
+			ob_end_clean();
+			return '-'.$out.'-';
+		}
+		return $out;
 	}
 
 	public function parseFromHex($hex) {
@@ -114,6 +144,7 @@ class SCTE35Parser {
 
 	private function parseSpliceDescriptors() {
 		$length = $this->splice->splice_descriptor_loop_length;
+		// TODO 2 bytes for sub-segments
 		$toReturn = array();
 		while ($length > 2 && $this->iterator->key() < ($this->bitarray->size - 16)) {
 			$desc_tag = bindec($this->read(8));
@@ -164,7 +195,10 @@ class SCTE35Parser {
 		$desc = new stdClass();
 		$desc->identifier = dechex(bindec($this->read(32)));
 		$desc->identifier_text = (string)hex2bin($desc->identifier);
-		$desc->segmentation_event_id = bindec($this->read(32));
+		$firstByte = dechex(bindec($this->read(8)));
+		$nextBytes = dechex(bindec($this->read(24)));
+		$desc->segmentation_event_id = '0x'.sprintf("%02s%06s",$firstByte,$nextBytes);
+		$desc->segmentation_event_id_text = '0x'.$firstByte.' '.hexdec($nextBytes);
 		$desc->segmentation_event_cancel_indicator = (bool)$this->read(1);
 		$this->read(7); // reserved
 		if ($desc->segmentation_event_cancel_indicator === false) {
@@ -192,16 +226,34 @@ class SCTE35Parser {
 			}
 			if ($desc->segmentation_duration_flag) {
 				$desc->segmentation_duration = bindec($this->read(40));
+				$desc->segmentation_duration_text = sprintf("%.03f", $desc->segmentation_duration / 90000);
 			}
 			$desc->segmentation_upid_type = bindec($this->read(8));
 			$desc->segmentation_upid_length = bindec($this->read(8));
-			$desc->segmentation_upid = $this->binaryStringToHex($this->read(8*$desc->segmentation_upid_length));
-			$desc->segmentation_upid_text = (string)hex2bin($desc->segmentation_upid);
+			switch ($desc->segmentation_upid_type) {
+				case 12:
+					// MPU - Managed Private UPID
+					// 16 bytes for AFMM spec
+					// length-16 for n*8 private_data
+					$desc->segmentation_upid = $this->parseMPU($desc->segmentation_upid_length);
+					break;
+				default:
+					$desc->segmentation_upid = $this->binaryStringToHex($this->read(8*$desc->segmentation_upid_length));
+					// FIXME bogus string to put in JSON, must find a way to represent the upid
+					//$desc->segmentation_upid_text = (string)hex2bin($desc->segmentation_upid);
+					break;
+			}
+			//$desc->segmentation_upid = $this->binaryStringToHex($this->read(8*$desc->segmentation_upid_length));
+			//$desc->segmentation_upid_text = mb_convert_encoding((string)hex2bin($desc->segmentation_upid), "UTF-8", "UTF-8");
 
 			$desc->segment_type_id = bindec($this->read(8));
 			$desc->segment_type_text = $this->getSegmentationTypeText($desc->segment_type_id);
 			$desc->segment_num = bindec($this->read(8));
 			$desc->segments_expected = bindec($this->read(8));
+			if (in_array($desc->segment_type_id, array(52, 54)) && $length > 28 ) {
+				$desc->sub_segment_num = bindec($this->read(8));
+				$desc->sub_segments_expected = bindec($this->read(8));
+			}
 		}
 		return $desc;
 	}
@@ -242,6 +294,36 @@ class SCTE35Parser {
 		return $break_duration;
 	}
 
+	private function parseMPU($length) {
+		// 16 bytes for AFMM spec
+		$mpu = new stdClass();
+		
+		/*$mpu->bytes = array();
+		for ($i=0; $i<$length; $i++) {
+			$mpu->bytes[] = $this->read(8);
+		}
+		$mpu->bytes_concat = implode("",$mpu->bytes);
+		//$mpu->decode = base64_decode($mpu->bytes_concat);
+		return $mpu;*/
+		
+		// Orig code - debug until length 16
+		$mpu->format_identifier = pack('H*', base_convert($this->read(32), 2, 16));
+		$mpu->version = bindec($this->read(8));
+		$mpu->cni = $this->binaryStringToHex($this->read(16));
+		$mpu->date = bindec($this->read(32));
+		$mpu->code = bindec($this->read(16));
+		$mpu->duration = bindec($this->read(24));
+		// length-16 for n*8 private_data
+		$mpu->private_data = array();
+		if ($length > 16) {
+			$nb = $length - 16;
+			for ($i=0; $i<$nb; $i++) {
+				$mpu->private_data[] = bindec($this->read(8));
+			}
+		}
+		return $mpu;
+	}
+
 	private function read($len = 1) {
 		$buff = '';
 		for ($i=0; $i<$len; $i++) {
@@ -272,6 +354,7 @@ class SCTE35Parser {
 		$mapSegmentationTypeId = array(
 			'00' => '(0x00) Not Indicated',
 			'01' => '(0x01) Content Identification',
+			'02' => '(0x02) 	',
 			'16' => '(0x10) Program Start',
 			'17' => '(0x11) Program End',
 			'18' => '(0x12) Program Early Termination',
@@ -317,9 +400,7 @@ class SCTE35Parser {
 		$sec = floor(($pts_sec*1000) % 60000) / 1000;
 		$min = floor(($pts_sec - $sec) / 60) % 60;
 		$hour = floor(($pts_sec - $sec - $min*60) / 3600);
-		return sprintf("%02d:%02d:%02.03f", $hour, $min, $sec);
+		return sprintf("%02d:%02d:%06s", $hour, $min, sprintf("%.03f",$sec));
 	}
 
 }
-
-
