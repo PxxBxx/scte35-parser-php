@@ -12,8 +12,8 @@ class SCTE35Parser {
 
 	}
 
-	public function parseFromBase64($base64) {
-		$this->bitarray = BitArray::fromString($this->Base64toBinaryString($base64));
+	public function parseFromBinaryString($str) {
+		$this->bitarray = BitArray::fromString($str);
 		$this->iterator = $this->bitarray->getIterator();
 		$this->splice = new stdClass();
 		$this->parse();
@@ -50,18 +50,35 @@ class SCTE35Parser {
 		return $out;
 	}
 
-	public function parseFromHex($hex) {
-		// TODO
+	public function parseFromBase64orHex($input) {
+		if (preg_match("#^0[xX]([0-9a-fA-F]+)$#", $input, $matches)) {
+			// seems like hex
+			return $this->parseFromHex($matches[1]);
+		}
+		else {
+			// try b64 as default input
+			return $this->parseFromBase64($input);
+		}
 	}
 
-	private function Base64toBinaryString($base64) {
-		$str = '';
-		$chars = str_split(base64_decode($base64));
-		foreach ($chars as $c) {
-			$str .= sprintf("%08b", ord($c));
-		}
-		return $str;
+	public function parseFromBase64($base64) {
+		return $this->parseFromBinaryString($this->StringToBinaryString(base64_decode($base64)));
+
 	}
+
+	public function parseFromHex($hex) {
+		return $this->parseFromBinaryString($this->StringToBinaryString(hex2bin($hex)));
+	}
+
+	private function StringToBinaryString($str) {
+		$out = '';
+		$chars = str_split($str);
+		foreach ($chars as $c) {
+			$out .= sprintf("%08b", ord($c));
+		}
+		return $out;
+	}
+
 	private function parse() {
 		$table_id = $this->binaryStringToHex($this->read(8));
 		if ($table_id !== 'fc')
@@ -354,7 +371,7 @@ class SCTE35Parser {
 		$mapSegmentationTypeId = array(
 			'00' => '(0x00) Not Indicated',
 			'01' => '(0x01) Content Identification',
-			'02' => '(0x02) 	',
+			'02' => '(0x02) Private Content Identification',
 			'16' => '(0x10) Program Start',
 			'17' => '(0x11) Program End',
 			'18' => '(0x12) Program Early Termination',
