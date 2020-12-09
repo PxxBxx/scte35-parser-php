@@ -3,7 +3,11 @@ class to parse SCTE35 messages, be they SpliceInsert or TimeSignal
 
 _Sorry, new to public repositories._
 
-After checkout, run composer install and launch the test example :
+## Installation
+checkout, run composer install.
+
+## Test Sample
+launch the test example :
 
 `php test.php`
 
@@ -23,6 +27,10 @@ Should output a long json with the exploded SCTE35 binary structure.
 
 Note : A lot nicer when piping to jq
 
+## HTML timeline
+You can use the `index.php` file to have a nice form and a old-school display of the events in a graphical and text timeline.
+
+## Usage
 be free to use, comment, issue, I had a hell of a time searching for a functional PHP lib to do that (Python lovers have everything they want in this domain, but not PHP mammoth).
 
 Cheers.
